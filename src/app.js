@@ -4,7 +4,8 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import morgan from "morgan";
 import dotenv from "dotenv";
-import { connectDB } from "./config/db.js";  // ✅ only once
+import { connectDB } from "./config/db.js";
+import userRoutes from "./routes/userRoutes.js";
 
 dotenv.config();
 
@@ -18,7 +19,7 @@ app.use(morgan("dev"));
 app.use(
     rateLimit({
         windowMs: 15 * 60 * 1000, // 15 minutes
-        max: 200,                 // limit each IP
+        max: 200,                 // per-IP limit
         standardHeaders: true,
         legacyHeaders: false,
     })
@@ -33,18 +34,29 @@ app.get("/v1/health", (_req, res) => {
     });
 });
 
-// TODO: Mount routes here (e.g., userRoutes)
-// import userRoutes from "./routes/userRoutes.js";
-// app.use("/v1/users", userRoutes);
+// API routes
+app.use("/users", userRoutes);
 
 // 404 fallback
 app.use((req, res) => res.status(404).json({ error: "Not found" }));
 
 const PORT = process.env.PORT || 4000;
 
-// ✅ Only one connectDB + one PORT
-connectDB().then(() => {
-    app.listen(PORT, () => {
-        console.log(`✅ User Management API running at http://localhost:${PORT}`);
-    });
+// Start server immediately (so /v1/health works even if DB is down)
+app.listen(PORT, () => {
+    console.log(`✅ User Management API running at http://localhost:${PORT}`);
 });
+
+// Connect to MongoDB in the background with simple retry
+(async function mongoBoot() {
+    for (let attempt = 1; attempt <= 5; attempt++) {
+        try {
+            await connectDB();
+            return;
+        } catch (e) {
+            console.error(`Mongo connect attempt ${attempt} failed. Retrying in 3s...`);
+            await new Promise((r) => setTimeout(r, 3000));
+        }
+    }
+    console.error("❌ Could not connect to Mongo after 5 attempts (server still running for /v1/health).");
+})();
